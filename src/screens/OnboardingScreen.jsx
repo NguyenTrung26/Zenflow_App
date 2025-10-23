@@ -1,11 +1,13 @@
-// src/screens/OnboardingScreen.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../contexts/AppContext";
+import { db } from "../services/firebase";
+import { doc, setDoc } from "firebase/firestore";
 
 export default function OnboardingScreen() {
   const navigate = useNavigate();
-  const { selectedGoal, setSelectedGoal, mood, setMood, setUser } = useApp();
+  const { selectedGoal, setSelectedGoal, mood, setMood, setUser, user } =
+    useApp();
 
   const [onboardingStep, setOnboardingStep] = React.useState(0);
 
@@ -15,24 +17,22 @@ export default function OnboardingScreen() {
       subtitle: "Hành trình thanh tịnh thân – tâm – trí",
       icon: "🧘‍♀️",
       content: (
-        <div className="space-y-4">
-          <p className="text-gray-600 text-center">
+        <div className="space-y-4 text-center">
+          <p className="text-gray-600">
             Khám phá sức mạnh của thiền định và yoga trong việc cải thiện sức
             khỏe tinh thần và thể chất
           </p>
           <div className="grid grid-cols-3 gap-4 mt-6">
-            <div className="text-center">
-              <div className="text-4xl mb-2">🧘</div>
-              <p className="text-sm text-gray-600">Thiền định</p>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl mb-2">🌿</div>
-              <p className="text-sm text-gray-600">Yoga</p>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl mb-2">💆</div>
-              <p className="text-sm text-gray-600">Thư giãn</p>
-            </div>
+            {[
+              { icon: "🧘", label: "Thiền định" },
+              { icon: "🌿", label: "Yoga" },
+              { icon: "💆", label: "Thư giãn" },
+            ].map((item) => (
+              <div key={item.label}>
+                <div className="text-4xl mb-2">{item.icon}</div>
+                <p className="text-sm text-gray-600">{item.label}</p>
+              </div>
+            ))}
           </div>
         </div>
       ),
@@ -70,7 +70,7 @@ export default function OnboardingScreen() {
               onClick={() => setSelectedGoal(goal.title)}
               className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
                 selectedGoal === goal.title
-                  ? "border-teal-500 bg-teal-50 shadow-lg"
+                  ? "border-teal-500 bg-teal-50 shadow-md"
                   : "border-gray-200 hover:border-teal-300"
               }`}
             >
@@ -120,6 +120,23 @@ export default function OnboardingScreen() {
 
   const currentStep = steps[onboardingStep];
 
+  const handleNext = async () => {
+    if (onboardingStep < steps.length - 1) {
+      setOnboardingStep(onboardingStep + 1);
+    } else {
+      const newUser = { ...user, goal: selectedGoal, mood };
+      setUser(newUser);
+
+      // 🔹 Lưu Firestore nếu có tài khoản
+      if (user?.uid) {
+        const ref = doc(db, "users", user.uid);
+        await setDoc(ref, { goal: selectedGoal, mood }, { merge: true });
+      }
+
+      navigate("/home");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50 via-blue-50 to-purple-50 flex items-center justify-center p-6">
       <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-8">
@@ -154,14 +171,7 @@ export default function OnboardingScreen() {
             </button>
           )}
           <button
-            onClick={() => {
-              if (onboardingStep < steps.length - 1) {
-                setOnboardingStep(onboardingStep + 1);
-              } else {
-                setUser({ name: "Người dùng", goal: selectedGoal, mood });
-                navigate("/home");
-              }
-            }}
+            onClick={handleNext}
             disabled={
               (onboardingStep === 1 && !selectedGoal) ||
               (onboardingStep === 2 && !mood)

@@ -1,3 +1,4 @@
+// src/screens/MeditationScreen.jsx
 import React, { useEffect, useState, useRef } from "react";
 import { db } from "../services/firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
@@ -36,9 +37,10 @@ export default function MeditationScreen() {
   } = useApp();
 
   const [completed, setCompleted] = useState(false);
+  const [saving, setSaving] = useState(false);
   const audioRef = useRef(null);
 
-  // 🎵 Danh sách âm thanh
+  // 🎵 Âm thanh nền
   const sounds = [
     {
       name: "Tiếng suối",
@@ -78,7 +80,7 @@ export default function MeditationScreen() {
     },
   ];
 
-  // 🕒 Các mốc thời gian
+  // 🕒 Thời lượng thiền
   const durations = [
     { label: "5 phút", value: 300 },
     { label: "10 phút", value: 600 },
@@ -87,17 +89,14 @@ export default function MeditationScreen() {
     { label: "30 phút", value: 1800 },
   ];
 
-  // 🧭 Đếm ngược timer
+  // ⏳ Đếm ngược
   useEffect(() => {
     if (!isTimerRunning || meditationTimer <= 0) return;
-    const interval = setInterval(
-      () => setMeditationTimer((prev) => prev - 1),
-      1000
-    );
-    return () => clearInterval(interval);
+    const timer = setInterval(() => setMeditationTimer((t) => t - 1), 1000);
+    return () => clearInterval(timer);
   }, [isTimerRunning, meditationTimer]);
 
-  // 🌬️ Hiệu ứng hít vào / thở ra
+  // 🌬️ Hít vào / Thở ra
   useEffect(() => {
     if (!isTimerRunning) return;
     const breathing = setInterval(
@@ -108,13 +107,13 @@ export default function MeditationScreen() {
     return () => clearInterval(breathing);
   }, [isTimerRunning]);
 
-  // ⏰ Khi hết giờ
+  // 🧘 Khi hoàn thành phiên thiền
   useEffect(() => {
     if (meditationTimer === 0 && isTimerRunning) {
       setIsTimerRunning(false);
       setCompleted(true);
 
-      // Cập nhật thống kê cục bộ
+      // ✅ Cập nhật local stats
       setUserStats((prev) => ({
         ...prev,
         totalSessions: prev.totalSessions + 1,
@@ -123,50 +122,56 @@ export default function MeditationScreen() {
         nextLevelProgress: Math.min(prev.nextLevelProgress + 10, 100),
       }));
 
-      // ✅ Lưu session vào Firestore (nếu đăng nhập)
-      if (user && user.uid) {
-        const saveSession = async () => {
-          try {
-            await addDoc(collection(db, "sessions"), {
-              uid: user.uid,
-              duration: selectedDuration,
-              sound: selectedSound,
-              createdAt: serverTimestamp(),
-            });
-            console.log("✅ Đã lưu session lên Firestore!");
-          } catch (err) {
-            console.error("🔥 Lỗi lưu session:", err);
-          }
-        };
-        saveSession();
-      }
+      // ✅ Lưu Firestore
+      if (user?.uid) saveSessionToFirestore();
     }
   }, [meditationTimer, isTimerRunning]);
 
-  // 🎧 Quản lý âm thanh
-  useEffect(() => {
-    if (audioRef.current) audioRef.current.pause();
-    const selected = sounds.find((s) => s.name === selectedSound);
-    if (selected && (isPremium || !selected.premium)) {
-      const audio = new Audio(selected.src);
-      audio.loop = true;
-      audio.volume = 0.4;
-      audioRef.current = audio;
-      if (isTimerRunning) audio.play();
+  const saveSessionToFirestore = async () => {
+    try {
+      setSaving(true);
+      await addDoc(collection(db, "sessions"), {
+        uid: user.uid,
+        duration: selectedDuration,
+        sound: selectedSound,
+        createdAt: serverTimestamp(),
+      });
+      console.log("✅ Lưu session thành công!");
+    } catch (err) {
+      console.error("🔥 Lỗi lưu session:", err);
+    } finally {
+      setSaving(false);
     }
+  };
+
+  // 🎧 Quản lý phát âm thanh
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    const sound = sounds.find((s) => s.name === selectedSound);
+    if (!sound) return;
+
+    // Nếu âm thanh Premium mà người dùng chưa mua → chặn
+    if (sound.premium && !isPremium) return;
+
+    const audio = new Audio(sound.src);
+    audio.loop = true;
+    audio.volume = 0.4;
+    audioRef.current = audio;
+
+    if (isTimerRunning) {
+      audio.play().catch((e) => console.warn("Không thể phát âm thanh:", e));
+    }
+
+    return () => {
+      audio.pause();
+    };
   }, [selectedSound, isTimerRunning]);
 
-  // 🧹 Dừng nhạc khi thoát
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-    };
-  }, []);
-
-  // ♻️ Đặt lại
+  // 🔁 Reset
   const handleReset = () => {
     setMeditationTimer(selectedDuration);
     setIsTimerRunning(false);
@@ -214,7 +219,7 @@ export default function MeditationScreen() {
             </div>
           </div>
 
-          {/* Chọn thời lượng */}
+          {/* Thời lượng */}
           {!isTimerRunning && (
             <div className="mb-6">
               <p className="text-gray-700 font-semibold mb-3 flex items-center gap-2">
@@ -268,9 +273,9 @@ export default function MeditationScreen() {
                 <button
                   key={sound.name}
                   onClick={() =>
-                    !sound.premium || isPremium
-                      ? setSelectedSound(sound.name)
-                      : navigate("/premium")
+                    sound.premium && !isPremium
+                      ? navigate("/premium")
+                      : setSelectedSound(sound.name)
                   }
                   className={`py-3 px-4 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
                     selectedSound === sound.name
@@ -288,7 +293,7 @@ export default function MeditationScreen() {
             </div>
           </div>
 
-          {/* Khi hoàn thành */}
+          {/* Hoàn thành */}
           {completed && (
             <div className="mt-6 bg-teal-50 rounded-xl p-4 border-2 border-teal-200 animate-fade-in">
               <div className="flex items-center justify-center gap-2 mb-2">
@@ -298,6 +303,11 @@ export default function MeditationScreen() {
               <p className="text-center text-gray-600 text-sm">
                 Bạn vừa thiền {selectedDuration / 60} phút. Xuất sắc! 🎉
               </p>
+              {saving && (
+                <p className="text-xs text-gray-400 text-center mt-2">
+                  Đang lưu phiên...
+                </p>
+              )}
             </div>
           )}
         </div>

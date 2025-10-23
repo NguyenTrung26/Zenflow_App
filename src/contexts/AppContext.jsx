@@ -5,34 +5,59 @@ import React, {
   useState,
   useRef,
 } from "react";
-import { save, load } from "../utils/storage"; // nhớ tạo file storage.js như hướng dẫn trước đó
-import { auth, loginWithGoogle, logout } from "../services/firebase";
+import { save, load } from "../utils/storage";
+import { auth, db } from "../services/firebase";
 import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
 const AppContext = createContext();
 
 export const AppProvider = ({ children }) => {
-  // 🧩 1. Trạng thái chung (App State)
+  // 🧠 1. Trạng thái người dùng & Premium
   const [user, setUser] = useState(load("user", null));
+  const [isPremium, setIsPremium] = useState(load("isPremium", false));
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        setUser({
+        const userData = {
           uid: firebaseUser.uid,
           name: firebaseUser.displayName,
           email: firebaseUser.email,
           photo: firebaseUser.photoURL,
-        });
-        save("user", firebaseUser);
+        };
+        setUser(userData);
+        save("user", userData);
+
+        try {
+          const ref = doc(db, "users", firebaseUser.uid);
+          const snap = await getDoc(ref);
+
+          if (snap.exists()) {
+            const data = snap.data();
+            setIsPremium(data.isPremium || false);
+            save("isPremium", data.isPremium || false);
+
+            if (data.goal) save("selectedGoal", data.goal);
+            if (data.mood) save("mood", data.mood);
+          } else {
+            await setDoc(ref, { isPremium: false }, { merge: true });
+          }
+        } catch (err) {
+          console.error("⚠️ Lỗi khi load dữ liệu người dùng:", err);
+        }
       } else {
         setUser(null);
+        setIsPremium(false);
+        save("user", null);
+        save("isPremium", false);
       }
     });
 
     return () => unsubscribe();
   }, []);
 
-  const [isPremium, setIsPremium] = useState(load("isPremium", false));
+  // 🌿 2. Trạng thái app
   const [zenMode, setZenMode] = useState(load("zenMode", false));
   const [selectedSound, setSelectedSound] = useState(
     load("selectedSound", "Tiếng suối")
@@ -40,12 +65,15 @@ export const AppProvider = ({ children }) => {
   const [selectedDuration, setSelectedDuration] = useState(
     load("selectedDuration", 300)
   );
-  const [mood, setMood] = useState(load("mood", ""));
   const [notifications, setNotifications] = useState(
     load("notifications", true)
   );
 
-  // 🕒 2. Thiền / Timer
+  // 🌱 3. Onboarding
+  const [selectedGoal, setSelectedGoal] = useState(load("selectedGoal", ""));
+  const [mood, setMood] = useState(load("mood", ""));
+
+  // 🕒 4. Thiền
   const [meditationTimer, setMeditationTimer] = useState(selectedDuration);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [breathAnimation, setBreathAnimation] = useState("inhale");
@@ -53,7 +81,7 @@ export const AppProvider = ({ children }) => {
     load("completedToday", false)
   );
 
-  // 📈 3. Thống kê người dùng
+  // 📈 5. Thống kê người dùng
   const [userStats, setUserStats] = useState(
     load("userStats", {
       streak: 7,
@@ -64,8 +92,7 @@ export const AppProvider = ({ children }) => {
     })
   );
 
-  // 🧘‍♀️ 4. Mục tiêu & Câu nói
-  const [selectedGoal, setSelectedGoal] = useState(load("selectedGoal", ""));
+  // 💬 6. Câu nói ngẫu nhiên
   const aiQuotes = [
     "Hạnh phúc không phải điểm đến, mà là cách bạn đi trên con đường.",
     "Tâm bình thì vạn sự bình, tâm an thì vạn sự an.",
@@ -77,7 +104,7 @@ export const AppProvider = ({ children }) => {
     aiQuotes[Math.floor(Math.random() * aiQuotes.length)]
   );
 
-  // 🎯 5. Timer Logic — quản lý đếm thời gian thiền
+  // 🕰️ 7. Logic Timer
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -95,7 +122,7 @@ export const AppProvider = ({ children }) => {
       setUserStats((prev) => ({
         ...prev,
         totalSessions: prev.totalSessions + 1,
-        totalMinutes: prev.totalMinutes + Math.floor(selectedDuration / 60),
+        totalMinutes: prev.totalMinutes + selectedDuration / 60,
         nextLevelProgress: Math.min(prev.nextLevelProgress + 10, 100),
         streak: prev.streak + 1,
       }));
@@ -104,7 +131,7 @@ export const AppProvider = ({ children }) => {
     return () => clearInterval(timerRef.current);
   }, [isTimerRunning, meditationTimer, selectedDuration]);
 
-  // 🌬️ 6. Hiệu ứng hít vào / thở ra
+  // 🌬️ 8. Hiệu ứng hít-thở
   useEffect(() => {
     if (isTimerRunning) {
       const cycle = setInterval(() => {
@@ -114,7 +141,7 @@ export const AppProvider = ({ children }) => {
     }
   }, [isTimerRunning]);
 
-  // 💾 7. Lưu dữ liệu tự động (localStorage)
+  // 💾 9. Lưu localStorage
   useEffect(() => save("userStats", userStats), [userStats]);
   useEffect(() => save("isPremium", isPremium), [isPremium]);
   useEffect(() => save("selectedSound", selectedSound), [selectedSound]);
@@ -122,27 +149,21 @@ export const AppProvider = ({ children }) => {
     () => save("selectedDuration", selectedDuration),
     [selectedDuration]
   );
-  useEffect(() => save("selectedGoal", selectedGoal), [selectedGoal]);
-  useEffect(() => save("mood", mood), [mood]);
+  useEffect(() => save("zenMode", zenMode), [zenMode]);
   useEffect(() => save("notifications", notifications), [notifications]);
   useEffect(() => save("completedToday", completedToday), [completedToday]);
-  useEffect(() => save("zenMode", zenMode), [zenMode]);
-  useEffect(() => save("user", user), [user]);
-
-  // 🔁 8. Khôi phục thời gian khi reload
-  useEffect(() => {
-    const savedTime = load("meditationTimer", selectedDuration);
-    setMeditationTimer(savedTime);
-  }, []);
-
+  useEffect(() => save("selectedGoal", selectedGoal), [selectedGoal]);
+  useEffect(() => save("mood", mood), [mood]);
   useEffect(() => save("meditationTimer", meditationTimer), [meditationTimer]);
 
-  // 🌟 9. Trả giá trị ra cho toàn app
+  // 🌟 10. Cung cấp cho toàn app
   return (
     <AppContext.Provider
       value={{
         user,
         setUser,
+        isPremium,
+        setIsPremium,
         meditationTimer,
         setMeditationTimer,
         selectedDuration,
@@ -155,14 +176,12 @@ export const AppProvider = ({ children }) => {
         setZenMode,
         selectedSound,
         setSelectedSound,
-        isPremium,
-        setIsPremium,
         userStats,
         setUserStats,
-        selectedGoal,
-        setSelectedGoal,
         mood,
         setMood,
+        selectedGoal,
+        setSelectedGoal,
         notifications,
         setNotifications,
         completedToday,
